@@ -33,6 +33,8 @@ rules_version = '2';
 //   - fileUrl: string (optional, 0..2048 chars) - Hugging Face Dataset persistent media URL
 //   - fileName: string (optional, 0..300 chars) - Uploaded media file name
 //   - fileType: string (optional, 0..120 chars) - MIME type or media category
+//   - files: list (optional, max 30 entries) - List of file objects { fileUrl, fileName, fileType } for multi-slide carousels/images/videos
+//   - voiceNotes: list (optional, max 30 entries) - List of voice note objects { id, url, duration, createdAt, authorName } recorded by the Admin and saved to Hugging Face Dataset
 //   - authorEmail: string (optional, 0..254 chars) - Author email (default: ebiringai@gmail.com)
 //   - authorName: string (optional, 0..150 chars) - Author full name (default: Ikechukwu Paul Ebiringa)
 //   - approved: bool (optional) - Admin approval toggle state
@@ -147,7 +149,7 @@ service cloud.firestore {
     }
 
     function isValidPost(data) {
-      return data.keys().size() <= 30 &&
+      return data.keys().size() <= 35 &&
         hasRequiredFields(['date', 'platform']) &&
         validStringLength('date', 1, 40) &&
         validStringLength('platform', 1, 80) &&
@@ -159,6 +161,8 @@ service cloud.firestore {
         isValidOptionalString('fileUrl', 0, 2048) &&
         isValidOptionalString('fileName', 0, 300) &&
         isValidOptionalString('fileType', 0, 120) &&
+        isValidOptionalList('files', 30) &&
+        isValidOptionalList('voiceNotes', 30) &&
         isValidOptionalString('authorEmail', 0, 254) &&
         isValidOptionalString('authorName', 0, 150) &&
         isValidOptionalBool('approved') &&
