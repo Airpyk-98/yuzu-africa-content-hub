@@ -1,0 +1,234 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// This security rules file assumes the following data structures:
+//
+// Collection: users
+// Document ID: {userId} (e.g. email slug or auto-generated ID)
+// Fields:
+//   - email: string (required, 3..254 chars, immutable on update) - User email address
+//   - name: string (required, 1..150 chars) - Full display name
+//   - role: string (required, 'admin' | 'manager', 1..50 chars) - Role in Yuzu Africa workspace
+//   - status: string (optional, 'approved' | 'pending' | 'deactivated', 1..50 chars) - Account state
+//   - password: string (optional, 1..256 chars) - Custom auth credential for workspace login
+//   - passwordHash: string (optional, 1..512 chars) - Optional hashed credential
+//   - createdAt: timestamp | string | number (optional) - Account creation timestamp
+//   - updatedAt: timestamp | string | number (optional) - Last profile update timestamp
+//
+// Collection: posts
+// Document ID: {postId} (e.g. '2026-11-02_Instagram' or auto-generated ID)
+// Fields:
+//   - date: string (required, 1..40 chars, immutable on update) - Scheduled calendar date (e.g. '2026-11-02')
+//   - platform: string (required, 1..80 chars, immutable on update) - Social channel
+//   - month: number | string (optional) - Calendar month
+//   - year: number | string (optional) - Calendar year
+//   - postType: string (optional, 0..120 chars) - Format (Carousel, Reel, Static, Video, Text, Broadcast, etc.)
+//   - pillar: string (optional, 0..150 chars) - Content pillar
+//   - title: string (optional, 0..300 chars) - Post headline/topic
+//   - caption: string (optional, 0..10000 chars) - Post copy/caption text
+//   - postLink: string (optional, 0..2048 chars) - External or live social post link
+//   - fileUrl: string (optional, 0..2048 chars) - Hugging Face Dataset persistent media URL
+//   - fileName: string (optional, 0..300 chars) - Uploaded media file name
+//   - fileType: string (optional, 0..120 chars) - MIME type or media category
+//   - authorEmail: string (optional, 0..254 chars) - Author email (default: ebiringai@gmail.com)
+//   - authorName: string (optional, 0..150 chars) - Author full name (default: Ikechukwu Paul Ebiringa)
+//   - approved: bool (optional) - Admin approval toggle state
+//   - comment: string (optional, 0..5000 chars) - Admin review commentary
+//   - updatedBy: string (optional, 0..254 chars) - Last editor identifier
+//   - updatedAt: timestamp | string | number (optional) - Last modification timestamp
+//   - createdAt: timestamp | string | number (optional) - Creation timestamp
+//
+// Collection: notifications
+// Document ID: {notifId} (auto-generated ID)
+// Fields:
+//   - title: string (optional, 0..300 chars) - Notification headline
+//   - message: string (required, 1..2000 chars) - Notification summary text
+//   - targetRole: string (optional, 0..60 chars) - Target audience ('admin' | 'manager' | 'all')
+//   - actorEmail: string (optional, 0..254 chars) - Email of user who triggered the event
+//   - actorName: string (optional, 0..150 chars) - Name of user who triggered the event
+//   - postDate: string (optional, 0..40 chars) - Associated calendar date
+//   - postId: string (optional, 0..150 chars) - Associated post document ID
+//   - platform: string (optional, 0..80 chars) - Associated social channel
+//   - readBy: list (optional, max 500 entries) - List of user emails/IDs that have read the notification
+//   - createdAt: timestamp | string | number (optional) - Creation timestamp
+//
+// Collection: meta
+// Document ID: {docId} (e.g. 'seeded_nov_2026')
+// Fields:
+//   - seeded: bool (optional) - Whether initial calendar and default accounts have been seeded
+//   - seededAt: timestamp | string | number (optional) - Timestamp of seeding
+//   - version: string | number (optional) - Seed schema version
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    // Validate required fields exist on incoming document
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // Validate string length on request.resource.data
+    function validStringLength(field, minLen, maxLen) {
+      return request.resource.data[field] is string &&
+        request.resource.data[field].size() >= minLen &&
+        request.resource.data[field].size() <= maxLen;
+    }
+
+    // Validate optional string (if present and non-null, must be string within length bounds)
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+        request.resource.data[field] == null ||
+        (request.resource.data[field] is string &&
+         request.resource.data[field].size() >= minLen &&
+         request.resource.data[field].size() <= maxLen);
+    }
+
+    // Validate email format
+    function isValidEmail(email) {
+      return email is string &&
+        email.size() >= 3 &&
+        email.size() <= 254 &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // Validate that a list is a list and enforces size limits
+    function isValidList(list, maxSize) {
+      return list is list && list.size() <= maxSize;
+    }
+
+    // Validate optional list field
+    function isValidOptionalList(field, maxSize) {
+      return !(field in request.resource.data) ||
+        request.resource.data[field] == null ||
+        isValidList(request.resource.data[field], maxSize);
+    }
+
+    // Validate optional boolean field
+    function isValidOptionalBool(field) {
+      return !(field in request.resource.data) ||
+        request.resource.data[field] == null ||
+        request.resource.data[field] is bool;
+    }
+
+    // Ensure uid field (if present) is not modified on update
+    function uidNotModified() {
+      return !('uid' in request.resource.data) ||
+        !('uid' in resource.data) ||
+        request.resource.data.uid == resource.data.uid;
+    }
+
+    // Validate that the document hasn't changed in immutable fields
+    function areImmutableFieldsUnchanged(fields) {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators (Used in BOTH create and update rules)
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().size() <= 20 &&
+        hasRequiredFields(['email', 'name', 'role']) &&
+        isValidEmail(data.email) &&
+        validStringLength('name', 1, 150) &&
+        validStringLength('role', 1, 50) &&
+        isValidOptionalString('status', 1, 50) &&
+        isValidOptionalString('password', 1, 256) &&
+        isValidOptionalString('passwordHash', 1, 512);
+    }
+
+    function isValidPost(data) {
+      return data.keys().size() <= 30 &&
+        hasRequiredFields(['date', 'platform']) &&
+        validStringLength('date', 1, 40) &&
+        validStringLength('platform', 1, 80) &&
+        isValidOptionalString('postType', 0, 120) &&
+        isValidOptionalString('pillar', 0, 150) &&
+        isValidOptionalString('title', 0, 300) &&
+        isValidOptionalString('caption', 0, 10000) &&
+        isValidOptionalString('postLink', 0, 2048) &&
+        isValidOptionalString('fileUrl', 0, 2048) &&
+        isValidOptionalString('fileName', 0, 300) &&
+        isValidOptionalString('fileType', 0, 120) &&
+        isValidOptionalString('authorEmail', 0, 254) &&
+        isValidOptionalString('authorName', 0, 150) &&
+        isValidOptionalBool('approved') &&
+        isValidOptionalString('comment', 0, 5000) &&
+        isValidOptionalString('updatedBy', 0, 254);
+    }
+
+    function isValidNotification(data) {
+      return data.keys().size() <= 20 &&
+        hasRequiredFields(['message']) &&
+        validStringLength('message', 1, 2000) &&
+        isValidOptionalString('title', 0, 300) &&
+        isValidOptionalString('targetRole', 0, 60) &&
+        isValidOptionalString('actorEmail', 0, 254) &&
+        isValidOptionalString('actorName', 0, 150) &&
+        isValidOptionalString('postDate', 0, 40) &&
+        isValidOptionalString('postId', 0, 150) &&
+        isValidOptionalString('platform', 0, 80) &&
+        isValidOptionalList('readBy', 500);
+    }
+
+    function isValidMeta(data) {
+      return data.keys().size() <= 20 &&
+        isValidOptionalBool('seeded');
+    }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
+
+    // Users collection: supports instant workspace login, seeding default accounts,
+    // manager sign-up, admin approval/deactivation, and password updates.
+    match /users/{userId} {
+      allow read: if true;
+      allow create: if isValidUser(request.resource.data);
+      allow update: if isValidUser(request.resource.data) &&
+        uidNotModified() &&
+        areImmutableFieldsUnchanged(['email']);
+      allow delete: if false;
+    }
+
+    // Posts collection: stores daily November 2026 social media calendar items,
+    // manager media/link/caption uploads, and admin approvals/comments.
+    match /posts/{postId} {
+      allow read: if true;
+      allow create: if isValidPost(request.resource.data);
+      allow update: if isValidPost(request.resource.data) &&
+        areImmutableFieldsUnchanged(['date', 'platform']);
+      allow delete: if true;
+    }
+
+    // Notifications collection: stores real-time activity alerts for admin & managers.
+    match /notifications/{notifId} {
+      allow read: if true;
+      allow create: if isValidNotification(request.resource.data);
+      allow update: if isValidNotification(request.resource.data);
+      allow delete: if true;
+    }
+
+    // Meta collection: stores initialization / calendar seed flags (e.g. seeded_nov_2026).
+    match /meta/{docId} {
+      allow read: if true;
+      allow create: if isValidMeta(request.resource.data);
+      allow update: if isValidMeta(request.resource.data);
+      allow delete: if false;
+    }
+
+    // Default deny for all other collections and paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
