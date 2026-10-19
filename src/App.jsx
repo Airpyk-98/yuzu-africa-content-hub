@@ -4,6 +4,7 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocs,
   updateDoc,
   addDoc,
   deleteDoc,
@@ -187,40 +188,29 @@ export default function App() {
 
     async function initAndSubscribe() {
       try {
-        const metaRef = doc(db, 'meta', 'seeded_nov_2026');
+        const metaRef = doc(db, 'meta', 'cleared_all_posts_v2');
         const metaSnap = await getDoc(metaRef);
 
         if (!metaSnap.exists() || !metaSnap.data()?.seeded) {
           await setDoc(doc(db, 'users', DEFAULT_ADMIN.id), DEFAULT_ADMIN, { merge: true });
           await setDoc(doc(db, 'users', DEFAULT_MANAGER.id), DEFAULT_MANAGER, { merge: true });
 
+          // Clear all previously seeded calendar posts and notifications
+          const existingPostsSnap = await getDocs(collection(db, 'posts'));
+          const existingNotifsSnap = await getDocs(collection(db, 'notifications'));
           const batch = writeBatch(db);
-          INITIAL_NOV_2026_POSTS.forEach((post) => {
-            const pRef = doc(db, 'posts', post.id);
-            batch.set(pRef, post, { merge: true });
-          });
+          existingPostsSnap.docs.forEach((d) => batch.delete(d.ref));
+          existingNotifsSnap.docs.forEach((d) => batch.delete(d.ref));
           await batch.commit();
-
-          await addDoc(collection(db, 'notifications'), {
-            title: 'November 2026 Calendar Loaded',
-            message: 'Ikechukwu Paul Ebiringa uploaded 87 posts for November 2026 across 6 social channels.',
-            targetRole: 'all',
-            actorEmail: DEFAULT_MANAGER.email,
-            actorName: DEFAULT_MANAGER.name,
-            postDate: '2026-11-02',
-            platform: 'Instagram',
-            readBy: [],
-            createdAt: new Date().toISOString()
-          });
 
           await setDoc(metaRef, {
             seeded: true,
             seededAt: new Date().toISOString(),
-            version: 1
+            version: 3
           });
         }
       } catch (err) {
-        console.error('Seed check error:', err);
+        console.error('Init check error:', err);
       } finally {
         setSeeding(false);
       }
@@ -1054,7 +1044,7 @@ export default function App() {
                   required
                   value={authEmail}
                   onChange={(e) => setAuthEmail(e.target.value)}
-                  placeholder="admin@yuzuafrica.com"
+                  placeholder="Enter your email"
                   className="w-full px-3.5 py-2.5 rounded-xl bg-[#FAF7F2] border border-[#E4DDF0] text-sm focus:outline-none focus:border-[#5B2A86]"
                 />
               </div>
@@ -1099,30 +1089,6 @@ export default function App() {
                   : 'Create Account'}
               </button>
             </form>
-
-            <div className="mt-6 pt-5 border-t border-[#F1ECF8]">
-              <p className="text-[11px] font-medium text-[#222222]/50 text-center mb-2.5">
-                Quick Fill Default Accounts
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => fillCredentials('admin@yuzuafrica.com', 'Admin321')}
-                  className="px-3 py-2 rounded-xl bg-[#F4EFFA] hover:bg-[#EAE0F6] text-[#5B2A86] text-xs font-medium text-left transition-all"
-                >
-                  <div className="font-heading font-semibold">Admin</div>
-                  <div className="text-[10px] opacity-75 truncate">admin@yuzuafrica.com</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => fillCredentials('ebiringai@gmail.com', 'Airpyk98')}
-                  className="px-3 py-2 rounded-xl bg-[#FFF7ED] hover:bg-[#FFEDD5] text-[#F58220] text-xs font-medium text-left transition-all"
-                >
-                  <div className="font-heading font-semibold text-[#222222]">Paul Ebiringa</div>
-                  <div className="text-[10px] text-[#222222]/70 truncate">ebiringai@gmail.com</div>
-                </button>
-              </div>
-            </div>
           </div>
         </main>
 
@@ -1583,17 +1549,6 @@ export default function App() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setCurrentYear(2026);
-                      setCurrentMonth(10);
-                      setSelectedDate('2026-11-02');
-                    }}
-                    className="px-2.5 py-1.5 rounded-xl bg-[#F6F0FC] hover:bg-[#EFE4FA] text-xs font-heading font-semibold text-[#D6246E] border border-[#DCC8F2]"
-                  >
-                    Nov
-                  </button>
-                  <button
-                    type="button"
                     onClick={handleNextMonth}
                     aria-label="Next month"
                     className="p-2 rounded-xl bg-[#FAF7F2] hover:bg-[#F2EBF9] text-[#5B2A86] border border-[#E6DFEE]"
@@ -1714,15 +1669,6 @@ export default function App() {
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <a
-                    href="/Yuzu_Africa_Nov2026_Calendar.pdf"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-[#5B2A86] hover:underline font-medium"
-                  >
-                    <BookOpen className="w-3.5 h-3.5" />
-                    Nov PDF
-                  </a>
                   <a
                     href="/Yuzu_Africa_Brand_Bible.pdf"
                     target="_blank"
